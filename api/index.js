@@ -1,42 +1,51 @@
 import * as cheerio from 'cheerio';
 
 export default async function handler(req, res) {
-  // Pastikan URL di bawah ini sudah benar
+  // Ganti dengan URL halaman index utama
   const urlIndex = 'https://shinigami.to/'; 
   
   try {
+    // 1. Ambil HTML mentah
     const response = await fetch(urlIndex, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
       }
     });
-
+    
+    if (!response.ok) throw new Error(`Gagal memuat halaman utama: ${response.status}`);
+    
     const html = await response.text();
     const $ = cheerio.load(html);
     
-    // Coba beberapa variasi selector
-    let urlTujuan = $('a:contains("Link Website")').attr('href'); 
+    // 2. Cari lokasi file JavaScript utama
+    // Mencari tag script yang memiliki /assets/index-
+    const jsPath = $('script[type="module"][src*="assets/index"]').attr('src');
     
-    if (!urlTujuan) {
-        urlTujuan = $('a.group.relative.flex.w-full').attr('href');
+    if (!jsPath) {
+      return res.status(404).send('Gagal menemukan file JavaScript utama di HTML.');
     }
     
-    if (urlTujuan) {
+    // 3. Gabungkan domain dengan path JS, lalu fetch isi file JS-nya
+    const jsUrl = new URL(jsPath, urlIndex).href;
+    const jsResponse = await fetch(jsUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    });
+    
+    const jsContent = await jsResponse.text();
+    
+    // 4. Gunakan Regex untuk mengekstrak URL tujuan.
+    // Kode ini mencari URL berawalan https:// yang mengandung kata "shinigami"
+    const urlRegex = /(https:\/\/[a-zA-Z0-9.-]*shinigami[a-zA-Z0-9.-]*\.[a-zA-Z]+)/i;
+    const match = jsContent.match(urlRegex);
+    
+    if (match && match[0]) {
+      const urlTujuan = match[0];
+      // 5. Sukses! Langsung redirect ke domain komik
       res.redirect(302, urlTujuan);
     } else {
-      // DEBUG MODE: Tampilkan HTML yang ditangkap oleh Vercel
-      const pageTitle = $('title').text() || 'Tidak ada judul halaman';
-      
-      res.status(404).send(`
-        <div style="font-family: sans-serif; padding: 20px;">
-            <h2 style="color: red;">Gagal: Tombol komik tidak ditemukan!</h2>
-            <p><strong>Judul halaman yang didapat Vercel:</strong> ${pageTitle}</p>
-            <p>Bisa jadi Vercel terblokir Cloudflare atau web menggunakan JavaScript render. Coba cek isi HTML di bawah ini, apakah struktur aslinya ada atau isinya malah halaman Cloudflare/Captcha:</p>
-            <textarea style="width: 100%; height: 500px; font-family: monospace; background: #f4f4f4;">${html}</textarea>
-        </div>
-      `);
+      res.status(404).send('URL komik tidak ditemukan di dalam file JavaScript.');
     }
 
   } catch (error) {
