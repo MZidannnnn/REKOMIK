@@ -1,54 +1,53 @@
 import * as cheerio from 'cheerio';
 
 export default async function handler(req, res) {
-  // Ganti dengan URL halaman index utama
-  const urlIndex = 'https://shinigami.to/'; 
+  const urlIndex = 'https://shinigami.to/'; // Ganti ke URL asli
   
   try {
-    // 1. Ambil HTML mentah
     const response = await fetch(urlIndex, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
     
-    if (!response.ok) throw new Error(`Gagal memuat halaman utama: ${response.status}`);
+    if (!response.ok) throw new Error(`Gagal memuat halaman: ${response.status}`);
     
     const html = await response.text();
     const $ = cheerio.load(html);
     
-    // 2. Cari lokasi file JavaScript utama
-    // Mencari tag script yang memiliki /assets/index-
     const jsPath = $('script[type="module"][src*="assets/index"]').attr('src');
+    if (!jsPath) return res.status(404).send('Gagal menemukan JS');
     
-    if (!jsPath) {
-      return res.status(404).send('Gagal menemukan file JavaScript utama di HTML.');
-    }
-    
-    // 3. Gabungkan domain dengan path JS, lalu fetch isi file JS-nya
     const jsUrl = new URL(jsPath, urlIndex).href;
     const jsResponse = await fetch(jsUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
     
     const jsContent = await jsResponse.text();
     
-    // 4. Gunakan Regex untuk mengekstrak URL tujuan.
-    // Kode ini mencari URL berawalan https:// yang mengandung kata "shinigami"
-    const urlRegex = /(https:\/\/[a-zA-Z0-9.-]*shinigami[a-zA-Z0-9.-]*\.[a-zA-Z]+)/i;
-    const match = jsContent.match(urlRegex);
+    // Tangkap SEMUA jenis URL (http/https) yang tertulis di dalam file JS
+    const allUrls = jsContent.match(/https?:\/\/[^\s"'`<>]+/g) || [];
+    // Buang URL yang duplikat
+    const uniqueUrls = [...new Set(allUrls)];
     
-    if (match && match[0]) {
-      const urlTujuan = match[0];
-      // 5. Sukses! Langsung redirect ke domain komik
-      res.redirect(302, urlTujuan);
+    // Cari yang mengandung kata shinigami secara spesifik
+    const targetUrl = uniqueUrls.find(url => url.toLowerCase().includes('shinigami') && !url.includes('w3.org'));
+    
+    if (targetUrl) {
+      res.redirect(302, targetUrl);
     } else {
-      res.status(404).send('URL komik tidak ditemukan di dalam file JavaScript.');
+      // Tampilkan semua URL yang berhasil ditemukan untuk kita analisis
+      res.status(404).send(`
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h2 style="color: red;">Gagal: Link komik tidak tertulis utuh di JS.</h2>
+          <p>Berikut adalah daftar semua link yang Vercel temukan di dalam sistem mereka:</p>
+          <ul style="background: #f4f4f4; padding: 15px; border-radius: 8px;">
+            ${uniqueUrls.length > 0 ? uniqueUrls.map(u => `<li>${u}</li>`).join('') : '<li>Tidak ada satupun URL ditemukan di JS.</li>'}
+          </ul>
+          <p><strong>Kesimpulan:</strong> Jika link komiknya tidak ada di daftar atas, berarti website ini memuat link tersebut melalui pemanggilan <b>API (XHR/Fetch)</b> secara dinamis.</p>
+        </div>
+      `);
     }
 
   } catch (error) {
-    res.status(500).send(`Terjadi kesalahan sistem: ${error.message}`);
+    res.status(500).send(`Error sistem: ${error.message}`);
   }
 }
